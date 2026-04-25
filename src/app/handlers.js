@@ -33,26 +33,34 @@ function createHandlers(config, sessionStore) {
 						{ label: "Provider", value: config.oidcIssuer },
 						{ label: "Callback", value: config.redirectUri },
 					]),
-				].join("")
-			)
+				].join(""),
+			),
 		);
 	}
 
-	function handleLogin(res) {
+	function handleLogin(req, res) {
+		const session = getSession(req);
+
+		if (session) {
+			redirect(res, "/home");
+			return;
+		}
+
 		if (!config.clientId || !config.clientSecret) {
 			sendHtml(
 				res,
 				500,
 				renderPage(
 					"Missing Client Config",
-					"<p>Set CLIENT_ID and CLIENT_SECRET in the client app .env file first.</p>"
-				)
+					"<p>Set CLIENT_ID and CLIENT_SECRET in the client app .env file first.</p>",
+				),
 			);
 			return;
 		}
 
 		const state = crypto.randomBytes(16).toString("hex");
-		const authorizeUrl = new URL(`${config.oidcIssuer}/o/auth/authorize`);
+		const stateCookieName = `${config.stateCookie}_${state}`;
+		const authorizeUrl = new URL(`${config.oidcIssuer}/auth/authorize`);
 
 		authorizeUrl.searchParams.set("client_id", config.clientId);
 		authorizeUrl.searchParams.set("redirect_uri", config.redirectUri);
@@ -61,7 +69,7 @@ function createHandlers(config, sessionStore) {
 		authorizeUrl.searchParams.set("state", state);
 
 		redirect(res, authorizeUrl.toString(), [
-			serializeCookie(config.stateCookie, state, {
+			serializeCookie(stateCookieName, "1", {
 				httpOnly: true,
 				maxAge: 600,
 				path: "/",
@@ -74,27 +82,36 @@ function createHandlers(config, sessionStore) {
 		const code = requestUrl.searchParams.get("code");
 		const state = requestUrl.searchParams.get("state");
 		const cookies = parseCookies(req);
-		const expectedState = cookies[config.stateCookie];
+		const stateCookieName = state ? `${config.stateCookie}_${state}` : "";
+		const hasExpectedState = Boolean(
+			stateCookieName && cookies[stateCookieName],
+		);
 
 		if (!code) {
 			sendHtml(
 				res,
 				400,
-				renderPage("Missing Code", "<p>No authorization code was returned.</p>")
+				renderPage(
+					"Missing Code",
+					"<p>No authorization code was returned.</p>",
+				),
 			);
 			return;
 		}
 
-		if (!state || !expectedState || state !== expectedState) {
+		if (!state || !hasExpectedState) {
 			sendHtml(
 				res,
 				400,
-				renderPage("Invalid State", "<p>The callback state did not match.</p>")
+				renderPage(
+					"Invalid State",
+					"<p>The callback state did not match.</p>",
+				),
 			);
 			return;
 		}
 
-		const tokenResponse = await fetch(`${config.oidcIssuer}/o/auth/token`, {
+		const tokenResponse = await fetch(`${config.oidcIssuer}/auth/token`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
@@ -115,17 +132,20 @@ function createHandlers(config, sessionStore) {
 				tokenResponse.status,
 				renderPage(
 					"Token Exchange Failed",
-					`<p>${escapeHtml(tokenData.message || "Unable to exchange code for tokens.")}</p>`
-				)
+					`<p>${escapeHtml(tokenData.message || "Unable to exchange code for tokens.")}</p>`,
+				),
 			);
 			return;
 		}
 
-		const profileResponse = await fetch(`${config.oidcIssuer}/o/user/userinfo`, {
-			headers: {
-				Authorization: `Bearer ${tokenData.access_token}`,
+		const profileResponse = await fetch(
+			`${config.oidcIssuer}/user/userinfo`,
+			{
+				headers: {
+					Authorization: `Bearer ${tokenData.access_token}`,
+				},
 			},
-		});
+		);
 		const profileData = await profileResponse.json();
 
 		if (!profileResponse.ok) {
@@ -134,8 +154,8 @@ function createHandlers(config, sessionStore) {
 				profileResponse.status,
 				renderPage(
 					"Userinfo Failed",
-					`<p>${escapeHtml(profileData.message || "Unable to fetch user profile.")}</p>`
-				)
+					`<p>${escapeHtml(profileData.message || "Unable to fetch user profile.")}</p>`,
+				),
 			);
 			return;
 		}
@@ -156,6 +176,12 @@ function createHandlers(config, sessionStore) {
 				sameSite: "Lax",
 			}),
 			serializeCookie(config.stateCookie, "", {
+				httpOnly: true,
+				maxAge: 0,
+				path: "/",
+				sameSite: "Lax",
+			}),
+			serializeCookie(stateCookieName, "", {
 				httpOnly: true,
 				maxAge: 0,
 				path: "/",
@@ -187,8 +213,8 @@ function createHandlers(config, sessionStore) {
 					`<p><strong>Subject:</strong> ${escapeHtml(profile.sub || "Unknown")}</p>`,
 					"</div>",
 					"<p><a class='button secondary' href='/logout'>Logout</a></p>",
-				].join("")
-			)
+				].join(""),
+			),
 		);
 	}
 

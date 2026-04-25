@@ -26,7 +26,7 @@ function createServer(config) {
 			}
 
 			if (req.method === "GET" && requestUrl.pathname === "/login") {
-				handlers.handleLogin(res);
+				handlers.handleLogin(req, res);
 				return;
 			}
 
