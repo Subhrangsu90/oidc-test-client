@@ -7,6 +7,7 @@ const {
 	escapeHtml,
 } = require("./utils");
 const { renderMetaList, renderPage } = require("./templates");
+const { verifyIdToken } = require("./oidc-token");
 
 function createHandlers(config, sessionStore) {
 	function getSession(req) {
@@ -138,6 +139,24 @@ function createHandlers(config, sessionStore) {
 			return;
 		}
 
+		try {
+			await verifyIdToken(
+				tokenData.id_token,
+				config.oidcIssuer,
+				config.clientId,
+			);
+		} catch (error) {
+			sendHtml(
+				res,
+				401,
+				renderPage(
+					"Token Verification Failed",
+					`<p>${escapeHtml(error.message || "Unable to verify ID token.")}</p>`,
+				),
+			);
+			return;
+		}
+
 		const profileResponse = await fetch(
 			`${config.oidcIssuer}/user/userinfo`,
 			{
@@ -171,18 +190,21 @@ function createHandlers(config, sessionStore) {
 		redirect(res, "/home", [
 			serializeCookie(config.sessionCookie, sessionId, {
 				httpOnly: true,
+				secure: true,
 				maxAge: 3600,
 				path: "/",
 				sameSite: "Lax",
 			}),
 			serializeCookie(config.stateCookie, "", {
 				httpOnly: true,
+				secure: true,
 				maxAge: 0,
 				path: "/",
 				sameSite: "Lax",
 			}),
 			serializeCookie(stateCookieName, "", {
 				httpOnly: true,
+				secure: true,
 				maxAge: 0,
 				path: "/",
 				sameSite: "Lax",
